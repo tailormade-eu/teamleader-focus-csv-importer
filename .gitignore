@@ -1,0 +1,45 @@
+# Ignore Visual Studio temporary files, build outputs, and user-specific files
+# See https://github.com/dotnet/core/blob/main/.gitignore for reference
+
+# Build folders
+bin/
+obj/
+
+# .NET user-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Visual Studio
+.vs/
+
+# Rider
+.idea/
+
+# Backup & temp files
+*~
+*.tmp
+
+# NuGet
+*.nupkg
+packages/
+
+# Publish output
+publish/
+
+# ReSharper
+*__ReSharper__*
+
+# Logs
+*.log
+
+# appsettings that may contain secrets
+appsettings.Development.json
+appsettings.*.Local.json
+
+# JetBrains Rider
+/.idea/
+
+# Mac files
+.DS_Store
