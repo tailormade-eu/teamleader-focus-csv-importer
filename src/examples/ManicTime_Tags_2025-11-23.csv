@@ -1,0 +1,9 @@
+﻿"Name","Start","End","Duration","Notes","Billable"
+"Cardoen, SQL, Stand-Up","2025-11-19T09:00:00.0000000","2025-11-19T09:15:00.0000000","0:15:00","","Yes"
+"Cardoen, SQL, Stand-Up Development","2025-11-19T09:15:00.0000000","2025-11-19T09:45:00.0000000","0:30:00","","Yes"
+"Cardoen, SQL, bug : historieken lokalisatie","2025-11-19T09:45:00.0000000","2025-11-19T10:30:00.0000000","0:45:00","* Meeting with Daniel & Anne
+- Prepare how localisation procedure works
+- Meeting
+- Update stored procedure not to update when the same localisation is sent","Yes"
+"Cardoen, C# .NET, Kick off meeting : Project integratie Api in acenter UI","2025-11-19T10:30:00.0000000","2025-11-19T11:30:00.0000000","1:00:00","","Yes"
+"Cardoen, Marketplace, Weekly meeting","2025-11-19T11:30:00.0000000","2025-11-19T12:15:00.0000000","0:45:00","","Yes"
