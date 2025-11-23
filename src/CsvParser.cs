@@ -1,81 +1,104 @@
+using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Text;
+using CsvHelper;
+using CsvHelper.Configuration;
 
 public static class CsvParser
 {
-    // Supports two formats:
-    // 1) Simple: tags;start;end;notes  (legacy)
-    // 2) ManicTime CSV with header containing Name,Start,End,Notes - fields may be quoted and Name contains commas
+    // Read entries from CSV. Prefer header-based CSV (ManicTime) and use CsvHelper for robust parsing.
     public static IEnumerable<WorkEntry> Read(string path)
     {
-        var lines = File.ReadAllLines(path);
-        if (lines.Length == 0) yield break;
+        if (!File.Exists(path)) yield break;
 
-        // Skip initial comments and blank lines to find first meaningful line
-        int i = 0;
-        while (i < lines.Length && string.IsNullOrWhiteSpace(lines[i])) i++;
-        if (i >= lines.Length) yield break;
+        using var stream = File.OpenRead(path);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
 
-        // If the first non-empty line looks like a ManicTime header (contains Name and Start), use CSV parsing
-        var first = lines[i].Trim();
-        if (first.IndexOf("name", StringComparison.OrdinalIgnoreCase) >= 0 && first.IndexOf("start", StringComparison.OrdinalIgnoreCase) >= 0)
+        // Find first meaningful line to detect header
+        string? firstNonEmpty = null;
+        while (!reader.EndOfStream)
         {
-            // Parse header to find column indices (join lines if header contains embedded newlines)
-            var headerBuilder = new StringBuilder(first);
-            var (headerFieldsTemp, headerComplete) = TryParseCsvLine(headerBuilder.ToString());
-            int headerLineIdx = i;
-            while (!headerComplete)
+            var l = reader.ReadLine();
+            if (string.IsNullOrWhiteSpace(l)) continue;
+            if (l.TrimStart().StartsWith("#")) continue;
+            firstNonEmpty = l;
+            break;
+        }
+
+        // Reset to beginning for CsvHelper consumption
+        stream.Seek(0, SeekOrigin.Begin);
+        reader.DiscardBufferedData();
+
+        if (firstNonEmpty != null && firstNonEmpty.IndexOf("name", StringComparison.OrdinalIgnoreCase) >= 0 && firstNonEmpty.IndexOf("start", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            var cfg = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
-                headerLineIdx++;
-                if (headerLineIdx >= lines.Length) break;
-                headerBuilder.Append("\n");
-                headerBuilder.Append(lines[headerLineIdx]);
-                (headerFieldsTemp, headerComplete) = TryParseCsvLine(headerBuilder.ToString());
-            }
-            var headerFields = headerFieldsTemp.Select(h => h.Trim()).ToArray();
-            int nameIdx = Array.FindIndex(headerFields, h => string.Equals(h, "name", StringComparison.OrdinalIgnoreCase));
-            int startIdx = Array.FindIndex(headerFields, h => string.Equals(h, "start", StringComparison.OrdinalIgnoreCase));
-            int endIdx = Array.FindIndex(headerFields, h => string.Equals(h, "end", StringComparison.OrdinalIgnoreCase));
-            int notesIdx = Array.FindIndex(headerFields, h => h.IndexOf("note", StringComparison.OrdinalIgnoreCase) >= 0);
-            int billableIdx = Array.FindIndex(headerFields, h => string.Equals(h, "billable", StringComparison.OrdinalIgnoreCase));
+                HasHeaderRecord = true,
+                IgnoreBlankLines = true,
+                BadDataFound = null,
+                DetectColumnCountChanges = false,
+                TrimOptions = TrimOptions.Trim,
+                MissingFieldFound = null
+            };
 
-            // Advance to data rows
-            i++;
-            i++; // move to first data line after header
-            for (; i < lines.Length; i++)
+            using var csv = new CsvReader(reader, cfg);
+            csv.Read();
+            csv.ReadHeader();
+            // determine header indices for robust fallback
+            var header = csv.HeaderRecord ?? Array.Empty<string>();
+            int idxName = Array.FindIndex(header, h => string.Equals(h, "name", StringComparison.OrdinalIgnoreCase));
+            int idxStart = Array.FindIndex(header, h => string.Equals(h, "start", StringComparison.OrdinalIgnoreCase));
+            int idxEnd = Array.FindIndex(header, h => string.Equals(h, "end", StringComparison.OrdinalIgnoreCase));
+            int idxNotes = Array.FindIndex(header, h => h != null && h.IndexOf("note", StringComparison.OrdinalIgnoreCase) >= 0);
+            int idxBillable = Array.FindIndex(header, h => string.Equals(h, "billable", StringComparison.OrdinalIgnoreCase));
+
+            while (csv.Read())
             {
-                // Accumulate physical lines until we have a complete CSV record
-                if (string.IsNullOrWhiteSpace(lines[i])) continue;
-                if (lines[i].TrimStart().StartsWith("#")) continue;
+                csv.TryGetField<string?>("Name", out var nameField);
+                csv.TryGetField<string?>("Start", out var startField);
+                csv.TryGetField<string?>("End", out var endField);
+                csv.TryGetField<string?>("Notes", out var notesField);
+                csv.TryGetField<string?>("Billable", out var billableField);
 
-                var recordBuilder = new StringBuilder(lines[i]);
-                var (fieldsTemp, complete) = TryParseCsvLine(recordBuilder.ToString());
-                int recordLineIdx = i;
-                while (!complete)
-                {
-                    recordLineIdx++;
-                    if (recordLineIdx >= lines.Length) break;
-                    recordBuilder.Append("\n");
-                    recordBuilder.Append(lines[recordLineIdx]);
-                    (fieldsTemp, complete) = TryParseCsvLine(recordBuilder.ToString());
-                }
-                var fields = fieldsTemp.ToArray();
-                // advance i to the last consumed physical line
-                i = recordLineIdx;
-                string nameField = nameIdx >= 0 && nameIdx < fields.Length ? fields[nameIdx] : string.Empty;
-                string startField = startIdx >= 0 && startIdx < fields.Length ? fields[startIdx] : string.Empty;
-                string endField = endIdx >= 0 && endIdx < fields.Length ? fields[endIdx] : string.Empty;
-                string notesField = notesIdx >= 0 && notesIdx < fields.Length ? fields[notesIdx] : string.Empty;
-                string billableField = billableIdx >= 0 && billableIdx < fields.Length ? fields[billableIdx] : string.Empty;
+                // fallback to index-based access when header lookup yields null/empty
+                if (string.IsNullOrWhiteSpace(nameField) && idxName >= 0)
+                    nameField = csv.GetField(idxName);
+                else if (string.IsNullOrWhiteSpace(nameField) && header.Length > 0)
+                    nameField = csv.GetField(0);
 
-                foreach (var e in BuildEntriesFromName(nameField, startField, endField, notesField, billableField)) yield return e;
+                if (string.IsNullOrWhiteSpace(startField) && idxStart >= 0)
+                    startField = csv.GetField(idxStart);
+                else if (string.IsNullOrWhiteSpace(startField) && header.Length > 1)
+                    startField = csv.GetField(1);
+
+                if (string.IsNullOrWhiteSpace(endField) && idxEnd >= 0)
+                    endField = csv.GetField(idxEnd);
+                else if (string.IsNullOrWhiteSpace(endField) && header.Length > 2)
+                    endField = csv.GetField(2);
+
+                if (string.IsNullOrWhiteSpace(notesField) && idxNotes >= 0)
+                    notesField = csv.GetField(idxNotes);
+                else if (string.IsNullOrWhiteSpace(notesField) && header.Length > 4)
+                    notesField = csv.GetField(4);
+
+                if (string.IsNullOrWhiteSpace(billableField) && idxBillable >= 0)
+                    billableField = csv.GetField(idxBillable);
+                else if (string.IsNullOrWhiteSpace(billableField) && header.Length > 5)
+                    billableField = csv.GetField(5);
+
+                foreach (var e in BuildEntriesFromName(nameField ?? string.Empty, startField ?? string.Empty, endField ?? string.Empty, notesField ?? string.Empty, billableField ?? string.Empty))
+                    yield return e;
             }
 
             yield break;
         }
 
-        // Fallback: original semicolon-based simple parser
-        foreach (var raw in lines)
+        // Fallback: legacy semicolon format or naive comma-split lines
+        var all = File.ReadAllLines(path);
+        foreach (var raw in all)
         {
             if (string.IsNullOrWhiteSpace(raw)) continue;
             if (raw.TrimStart().StartsWith("#")) continue;
@@ -84,7 +107,6 @@ public static class CsvParser
             var parts = raw.Split(';');
             if (parts.Length < 4)
             {
-                // Try comma as separator fallback (naive)
                 var commaParts = raw.Split(',');
                 if (commaParts.Length >= 4)
                 {
@@ -95,7 +117,7 @@ public static class CsvParser
                     foreach (var e in BuildEntriesFromName(tagsPart, start, end, notes, string.Empty)) yield return e;
                     continue;
                 }
-                Console.WriteLine($"Skipping malformed line: {raw}");
+                // skip malformed
                 continue;
             }
 
@@ -110,10 +132,10 @@ public static class CsvParser
 
     static IEnumerable<WorkEntry> BuildEntriesFromName(string nameField, string startStr, string endStr, string notes, string billableField)
     {
-        // nameField is a comma-separated list of tags (e.g. "Company, Project, Group, Task")
-        var tags = nameField.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(t => t.Trim()).ToArray();
+        var tags = string.IsNullOrWhiteSpace(nameField)
+            ? Array.Empty<string>()
+            : nameField.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(t => t.Trim()).ToArray();
 
-        // Make mapping forgiving: allow 2..n tags
         string company = tags.Length > 0 ? tags[0] : string.Empty;
         string project = tags.Length > 1 ? tags[1] : string.Empty;
         string group = tags.Length > 2 ? tags[2] : string.Empty;
@@ -148,70 +170,11 @@ public static class CsvParser
         };
     }
 
-    // Try parsing a CSV record; returns (fields array, complete)
-    // complete==false means the input ended while inside an open quoted field (needs more physical lines)
-    static (IEnumerable<string> fields, bool complete) TryParseCsvLine(string line)
-    {
-        var fields = new List<string>();
-        if (line == null) return (fields, true);
-        var sb = new StringBuilder();
-        bool inQuotes = false;
-        for (int i = 0; i < line.Length; i++)
-        {
-            char c = line[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    // lookahead for escaped quote
-                    if (i + 1 < line.Length && line[i + 1] == '"')
-                    {
-                        sb.Append('"');
-                        i++; // skip next
-                    }
-                    else
-                    {
-                        inQuotes = false;
-                    }
-                }
-                else
-                {
-                    sb.Append(c);
-                }
-            }
-            else
-            {
-                if (c == '"')
-                {
-                    inQuotes = true;
-                }
-                else if (c == ',')
-                {
-                    fields.Add(sb.ToString());
-                    sb.Clear();
-                }
-                else
-                {
-                    sb.Append(c);
-                }
-            }
-        }
-        // if still inQuotes => record incomplete
-        if (inQuotes)
-        {
-            return (fields, false);
-        }
-        fields.Add(sb.ToString());
-        return (fields, true);
-    }
-
     static DateTime? ParseDate(string s)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
-        // Try round-trip / ISO formats first
         if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var dt)) return dt;
         if (DateTime.TryParse(s, out dt)) return dt;
-        // Try trimming fractional seconds timezone formats
         if (DateTime.TryParseExact(s, "yyyy-MM-ddTHH:mm:ss.fffffff", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out dt)) return dt;
         if (DateTime.TryParseExact(s, "yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out dt)) return dt;
         return null;
