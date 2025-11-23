@@ -23,18 +23,16 @@ public class Resolver
     public async Task<string> GetOrCreateCompanyAsync(string name)
     {
         if (_companyCache.TryGetValue(name, out var id)) return id;
-        await foreach (var c in _api.SearchCompaniesAsync(name))
+        var companies = await _api.SearchCompaniesAsync(name);
+        foreach (var c in companies)
         {
-            var cname = c.GetProperty("name").GetString() ?? string.Empty;
-            var cid = c.GetProperty("id").GetString() ?? string.Empty;
-            if (IsClose(cname, name))
+            if (IsClose(c.Name, name))
             {
-                _companyCache[name] = cid;
-                return cid;
+                _companyCache[name] = c.Id;
+                return c.Id;
             }
         }
-        var added = await _api.AddCompanyAsync(name);
-        var newId = added?.GetProperty("id").GetString() ?? string.Empty;
+        var newId = await _api.AddCompanyAsync(name) ?? string.Empty;
         _companyCache[name] = newId;
         return newId;
     }
@@ -43,18 +41,16 @@ public class Resolver
     {
         var key = companyId + "|" + projectName;
         if (_projectCache.TryGetValue(key, out var pid)) return pid;
-        await foreach (var p in _api.ListProjectsAsync(companyId))
+        var projects = await _api.ListProjectsAsync(companyId);
+        foreach (var p in projects)
         {
-            var pname = p.GetProperty("name").GetString() ?? string.Empty;
-            var id = p.GetProperty("id").GetString() ?? string.Empty;
-            if (IsClose(pname, projectName))
+            if (IsClose(p.Name, projectName))
             {
-                _projectCache[key] = id;
-                return id;
+                _projectCache[key] = p.Id;
+                return p.Id;
             }
         }
-        var added = await _api.AddProjectAsync(companyId, projectName);
-        var newId = added?.GetProperty("id").GetString() ?? string.Empty;
+        var newId = await _api.AddProjectAsync(companyId, projectName) ?? string.Empty;
         _projectCache[key] = newId;
         return newId;
     }
@@ -63,18 +59,16 @@ public class Resolver
     {
         var key = projectId + "|" + phaseName;
         if (_phaseCache.TryGetValue(key, out var id)) return id;
-        await foreach (var ph in _api.ListProjectPhasesAsync(projectId))
+        var phases = await _api.ListProjectPhasesAsync(projectId);
+        foreach (var ph in phases)
         {
-            var pname = ph.GetProperty("name").GetString() ?? string.Empty;
-            var pid = ph.GetProperty("id").GetString() ?? string.Empty;
-            if (IsClose(pname, phaseName))
+            if (IsClose(ph.Name, phaseName))
             {
-                _phaseCache[key] = pid;
-                return pid;
+                _phaseCache[key] = ph.Id;
+                return ph.Id;
             }
         }
-        var added = await _api.AddProjectPhaseAsync(projectId, phaseName);
-        var newId = added?.GetProperty("id").GetString() ?? string.Empty;
+        var newId = await _api.AddProjectPhaseAsync(projectId, phaseName) ?? string.Empty;
         _phaseCache[key] = newId;
         return newId;
     }
@@ -84,14 +78,10 @@ public class Resolver
         var key = projectPhaseId + "|" + taskName;
         if (_taskCache.TryGetValue(key, out var id)) return id;
 
-        // We don't have a direct tasks.list by phase id in KISS; attempt to list by project (if phase has projectId property)
-        // For simplicity, list tasks for all projects - using ListTasksForProjectAsync is project-scoped; skip and always create if not found via exact match.
+        // We don't have a direct tasks.list by phase id in KISS; attempt to list by project if possible (skipped here).
+        // In KISS: tasks matched by exact equality; create if not found.
 
-        // In KISS: tasks matched by exact equality
-        // We'll attempt to find task among tasks for the project if available - best-effort omitted here.
-
-        var added = await _api.AddTaskAsync("", projectPhaseId, taskName);
-        var newId = added?.GetProperty("id").GetString() ?? string.Empty;
+        var newId = await _api.AddTaskAsync(string.Empty, projectPhaseId, taskName) ?? string.Empty;
         _taskCache[key] = newId;
         return newId;
     }

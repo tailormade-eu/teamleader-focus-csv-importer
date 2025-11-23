@@ -1,110 +1,112 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 public class TeamleaderApi
 {
     private readonly HttpClient _http;
+
     public TeamleaderApi(HttpClient http)
     {
         _http = http;
     }
 
-    // Simple wrappers for endpoints used in KISS spec
+    public record ApiItem(string Id, string Name);
 
-    public async Task<IEnumerable<dynamic>> SearchCompaniesAsync(string name)
+    private static List<ApiItem> ParseListFromJson(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var list = new List<ApiItem>();
+        if (doc.RootElement.TryGetProperty("data", out var data))
+        {
+            foreach (var el in data.EnumerateArray())
+            {
+                var id = el.TryGetProperty("id", out var idp) ? idp.GetString() ?? string.Empty : string.Empty;
+                var nm = el.TryGetProperty("name", out var np) ? np.GetString() ?? string.Empty : string.Empty;
+                list.Add(new ApiItem(id, nm));
+            }
+        }
+        return list;
+    }
+
+    public async Task<List<ApiItem>> SearchCompaniesAsync(string name)
     {
         var url = $"/companies.list?search={Uri.EscapeDataString(name)}";
         var resp = await _http.GetAsync(url);
         resp.EnsureSuccessStatusCode();
         var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("data", out var data))
-        {
-            foreach (var el in data.EnumerateArray()) yield return el;
-        }
+        return ParseListFromJson(json);
     }
 
-    public async Task<dynamic?> AddCompanyAsync(string name)
+    public async Task<string?> AddCompanyAsync(string name)
     {
         var payload = new { name };
         var resp = await _http.PostAsJsonAsync("/companies.add", payload);
         if (!resp.IsSuccessStatusCode) return null;
         var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("data", out var data)) return data.EnumerateArray().FirstOrDefault();
-        return null;
+        var list = ParseListFromJson(json);
+        return list.FirstOrDefault()?.Id;
     }
 
-    public async Task<IEnumerable<dynamic>> ListProjectsAsync(string companyId)
+    public async Task<List<ApiItem>> ListProjectsAsync(string companyId)
     {
         var url = $"/projects.list?company_id={Uri.EscapeDataString(companyId)}";
         var resp = await _http.GetAsync(url);
         resp.EnsureSuccessStatusCode();
         var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("data", out var data))
-        {
-            foreach (var el in data.EnumerateArray()) yield return el;
-        }
+        return ParseListFromJson(json);
     }
 
-    public async Task<dynamic?> AddProjectAsync(string companyId, string name)
+    public async Task<string?> AddProjectAsync(string companyId, string name)
     {
         var payload = new { company_id = companyId, name };
         var resp = await _http.PostAsJsonAsync("/projects.add", payload);
         if (!resp.IsSuccessStatusCode) return null;
         var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("data", out var data)) return data.EnumerateArray().FirstOrDefault();
-        return null;
+        var list = ParseListFromJson(json);
+        return list.FirstOrDefault()?.Id;
     }
 
-    public async Task<IEnumerable<dynamic>> ListProjectPhasesAsync(string projectId)
+    public async Task<List<ApiItem>> ListProjectPhasesAsync(string projectId)
     {
         var url = $"/projectPhases.list?project_id={Uri.EscapeDataString(projectId)}";
         var resp = await _http.GetAsync(url);
         resp.EnsureSuccessStatusCode();
         var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("data", out var data))
-        {
-            foreach (var el in data.EnumerateArray()) yield return el;
-        }
+        return ParseListFromJson(json);
     }
 
-    public async Task<dynamic?> AddProjectPhaseAsync(string projectId, string name)
+    public async Task<string?> AddProjectPhaseAsync(string projectId, string name)
     {
         var payload = new { project_id = projectId, name };
         var resp = await _http.PostAsJsonAsync("/projectPhases.add", payload);
         if (!resp.IsSuccessStatusCode) return null;
         var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("data", out var data)) return data.EnumerateArray().FirstOrDefault();
-        return null;
+        var list = ParseListFromJson(json);
+        return list.FirstOrDefault()?.Id;
     }
 
-    public async Task<IEnumerable<dynamic>> ListTasksForProjectAsync(string projectId)
+    public async Task<List<ApiItem>> ListTasksForProjectAsync(string projectId)
     {
         var url = $"/tasks.list?project_id={Uri.EscapeDataString(projectId)}";
         var resp = await _http.GetAsync(url);
         resp.EnsureSuccessStatusCode();
         var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("data", out var data))
-        {
-            foreach (var el in data.EnumerateArray()) yield return el;
-        }
+        return ParseListFromJson(json);
     }
 
-    public async Task<dynamic?> AddTaskAsync(string projectId, string phaseId, string name)
+    public async Task<string?> AddTaskAsync(string projectId, string phaseId, string name)
     {
         var payload = new { project_id = projectId, project_phase_id = phaseId, name };
         var resp = await _http.PostAsJsonAsync("/tasks.add", payload);
         if (!resp.IsSuccessStatusCode) return null;
         var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("data", out var data)) return data.EnumerateArray().FirstOrDefault();
-        return null;
+        var list = ParseListFromJson(json);
+        return list.FirstOrDefault()?.Id;
     }
 
     public async Task<bool> AddTimeEntryAsync(string taskId, DateTime? start, DateTime? end, string description)
@@ -121,3 +123,4 @@ public class TeamleaderApi
         return resp.IsSuccessStatusCode;
     }
 }
+
