@@ -148,10 +148,12 @@ public static class CsvParser
         };
     }
 
-    // Very small CSV parser that respects quotes and doubled quotes
-    static IEnumerable<string> ParseCsvLine(string line)
+    // Try parsing a CSV record; returns (fields array, complete)
+    // complete==false means the input ended while inside an open quoted field (needs more physical lines)
+    static (IEnumerable<string> fields, bool complete) TryParseCsvLine(string line)
     {
-        if (line == null) yield break;
+        var fields = new List<string>();
+        if (line == null) return (fields, true);
         var sb = new StringBuilder();
         bool inQuotes = false;
         for (int i = 0; i < line.Length; i++)
@@ -185,7 +187,7 @@ public static class CsvParser
                 }
                 else if (c == ',')
                 {
-                    yield return sb.ToString();
+                    fields.Add(sb.ToString());
                     sb.Clear();
                 }
                 else
@@ -194,7 +196,13 @@ public static class CsvParser
                 }
             }
         }
-        yield return sb.ToString();
+        // if still inQuotes => record incomplete
+        if (inQuotes)
+        {
+            return (fields, false);
+        }
+        fields.Add(sb.ToString());
+        return (fields, true);
     }
 
     static DateTime? ParseDate(string s)
