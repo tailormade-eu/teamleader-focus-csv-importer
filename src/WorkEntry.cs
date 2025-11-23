@@ -8,4 +8,6 @@ public class WorkEntry
     public DateTime? Start { get; init; }
     public DateTime? End { get; init; }
     public string Notes { get; init; } = string.Empty;
+    // Nullable: true = billable, false = non-billable, null = unknown/not-provided
+    public bool? Billable { get; init; }
 }
