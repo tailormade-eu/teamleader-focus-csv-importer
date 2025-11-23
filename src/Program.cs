@@ -1,12 +1,29 @@
 using System.Text.Json;
 using System.Linq;
 
-var argsList = args.ToList();
-var dryRun = argsList.Contains("--dry-run");
-if (dryRun) argsList.Remove("--dry-run");
+var rawArgs = args.ToList();
+// detect flags anywhere in the args
+var dryRun = rawArgs.Contains("--dry-run");
+var authTest = rawArgs.Contains("--auth-test");
+var exchangeCodeFlag = rawArgs.Contains("--exchange-code");
 
-var configPath = argsList.Count > 0 ? argsList[0] : "appsettings.json";
-var inputPath = argsList.Count > 1 ? argsList[1] : "input.csv";
+// Build a list of positional args (exclude known flags and their parameters)
+var positional = new List<string>();
+for (int i = 0; i < rawArgs.Count; i++)
+{
+    var a = rawArgs[i];
+    if (a == "--dry-run" || a == "--auth-test") continue;
+    if (a == "--exchange-code")
+    {
+        // skip the flag and the next value (the redirect url) if present
+        i++;
+        continue;
+    }
+    positional.Add(a);
+}
+
+var configPath = positional.Count > 0 ? positional[0] : "appsettings.json";
+var inputPath = positional.Count > 1 ? positional[1] : "input.csv";
 
 // If dry-run was requested, skip reading config/token and just parse the input file
 if (dryRun)
@@ -43,8 +60,41 @@ if (!File.Exists(configPath))
     return 1;
 }
 
-var cfgJson = await File.ReadAllTextAsync(configPath);
-var cfg = JsonSerializer.Deserialize<Config>(cfgJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+// Load configuration by merging base config and optional environment-specific config.
+var baseConfigPath = Path.GetFullPath(configPath);
+if (!File.Exists(baseConfigPath))
+{
+    Console.WriteLine($"Config file not found: {configPath}");
+    return 1;
+}
+
+var baseJson = await File.ReadAllTextAsync(baseConfigPath);
+var mergedDict = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(baseJson) ?? new Dictionary<string, JsonElement>();
+
+// Determine environment (prefer DOTNET_ENVIRONMENT, then ASPNETCORE_ENVIRONMENT, default to Development)
+var env = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development";
+var envConfigPath = Path.Combine(Path.GetDirectoryName(baseConfigPath) ?? Directory.GetCurrentDirectory(), $"appsettings.{env}.json");
+if (File.Exists(envConfigPath))
+{
+    var envJson = await File.ReadAllTextAsync(envConfigPath);
+    var envDict = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(envJson) ?? new Dictionary<string, JsonElement>();
+    // overlay env values (env overrides base)
+    foreach (var kv in envDict)
+    {
+        mergedDict[kv.Key] = kv.Value;
+    }
+}
+
+// Also allow overriding from environment variables (simple mapping: TEAMLEADER_TOKEN -> ApiToken)
+var envToken = Environment.GetEnvironmentVariable("TEAMLEADER_TOKEN");
+if (!string.IsNullOrWhiteSpace(envToken))
+{
+    mergedDict["ApiToken"] = JsonDocument.Parse(JsonSerializer.Serialize(envToken)).RootElement;
+}
+
+// Re-serialize merged dictionary to JSON and bind to Config
+var mergedJson = JsonSerializer.Serialize(mergedDict);
+var cfg = JsonSerializer.Deserialize<Config>(mergedJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
 
 if (string.IsNullOrWhiteSpace(cfg.BaseUrl))
 {
@@ -75,15 +125,16 @@ if (string.IsNullOrWhiteSpace(token))
 }
 
 // Support manual authorization-code exchange: --exchange-code "<redirect_url>"
-if (argsList.Contains("--exchange-code"))
+if (exchangeCodeFlag)
 {
-    var idx = argsList.IndexOf("--exchange-code");
-    if (idx < 0 || argsList.Count <= idx + 1)
+    // find the flag in the original raw args to extract the provided url
+    var idx = rawArgs.FindIndex(a => a == "--exchange-code");
+    if (idx < 0 || rawArgs.Count <= idx + 1)
     {
         Console.WriteLine("Usage: --exchange-code \"<redirect_url>\"");
         return 1;
     }
-    var redirectUrl = argsList[idx + 1];
+    var redirectUrl = rawArgs[idx + 1];
     // parse code and redirect_uri from URL
     try
     {
@@ -121,6 +172,70 @@ if (argsList.Contains("--exchange-code"))
         var tokenPath = Path.Combine(cfgDir, "auth_token.json");
         OAuthClient.SaveAuthTokenToFile(tokenObj, tokenPath);
         Console.WriteLine($"Token saved to: {tokenPath}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Failed to parse or exchange code: {ex.Message}");
+        return 1;
+    }
+}
+
+// Interactive auth-test flow: prints authorize URL, prompts for redirect URL, exchanges code
+if (authTest)
+{
+    if (cfg.Authentication is null || string.IsNullOrWhiteSpace(cfg.Authentication.ClientId) || string.IsNullOrWhiteSpace(cfg.Authentication.ClientSecret))
+    {
+        Console.WriteLine("ClientId/ClientSecret not found in config. Add them under Authentication or set environment variables.");
+        return 1;
+    }
+
+    var clientId = cfg.Authentication.ClientId;
+    var state = "st-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+    var defaultRedirect = "http://localhost:5000/callback";
+    Console.WriteLine("Interactive OAuth Authorization Code flow (manual steps):");
+    Console.WriteLine($"1) Open the following URL in your browser and authorize the app:");
+    var authUrl = $"https://focus.teamleader.eu/oauth2/authorize?client_id={Uri.EscapeDataString(clientId)}&response_type=code&redirect_uri={Uri.EscapeDataString(defaultRedirect)}&state={Uri.EscapeDataString(state)}";
+    Console.WriteLine(authUrl);
+    Console.WriteLine();
+    Console.WriteLine("2) After consenting you will be redirected to your redirect URI. Copy the full redirect URL (including ?code=...) and paste it here.");
+    Console.Write("Redirect URL> ");
+    var input = Console.ReadLine();
+    if (string.IsNullOrWhiteSpace(input))
+    {
+        Console.WriteLine("No redirect URL provided. Aborting.");
+        return 1;
+    }
+
+    try
+    {
+        var uri = new Uri(input.Trim());
+        var qs = uri.Query.TrimStart('?');
+        var dict = qs.Split(new[] { '&' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Split(new[] { '=' }, 2))
+            .Where(parts => parts.Length == 2)
+            .ToDictionary(k => Uri.UnescapeDataString(k[0]), v => Uri.UnescapeDataString(v[1]));
+
+        if (!dict.TryGetValue("code", out var code))
+        {
+            Console.WriteLine("No 'code' parameter found in redirect URL.");
+            return 1;
+        }
+
+        var redirectUri = uri.GetLeftPart(UriPartial.Path);
+        Console.WriteLine("Exchanging authorization code for access token...");
+        var tokenObj = await OAuthClient.ExchangeAuthorizationCodeAsync(cfg.BaseUrl, cfg.Authentication.ClientId, cfg.Authentication.ClientSecret, code, redirectUri);
+        if (tokenObj is null)
+        {
+            Console.WriteLine("Token exchange failed.");
+            return 1;
+        }
+
+        var cfgDir = Path.GetDirectoryName(Path.GetFullPath(configPath)) ?? Directory.GetCurrentDirectory();
+        var tokenPath = Path.Combine(cfgDir, "auth_token.json");
+        OAuthClient.SaveAuthTokenToFile(tokenObj, tokenPath);
+        Console.WriteLine($"Token saved to: {tokenPath}");
+        Console.WriteLine($"Expires in: {tokenObj.ExpiresIn} seconds (obtained at {tokenObj.ObtainedAt:o})");
         return 0;
     }
     catch (Exception ex)
