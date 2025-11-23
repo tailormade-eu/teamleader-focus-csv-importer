@@ -1,7 +1,41 @@
 using System.Text.Json;
+using System.Linq;
 
-var configPath = args.Length > 0 ? args[0] : "appsettings.json";
-var inputPath = args.Length > 1 ? args[1] : "input.csv";
+var argsList = args.ToList();
+var dryRun = argsList.Contains("--dry-run");
+if (dryRun) argsList.Remove("--dry-run");
+
+var configPath = argsList.Count > 0 ? argsList[0] : "appsettings.json";
+var inputPath = argsList.Count > 1 ? argsList[1] : "input.csv";
+
+// If dry-run was requested, skip reading config/token and just parse the input file
+if (dryRun)
+{
+    if (!File.Exists(inputPath))
+    {
+        Console.WriteLine($"Input file not found: {inputPath}");
+        return 1;
+    }
+
+    var entriesDry = CsvParser.Read(inputPath);
+    int i = 0;
+    foreach (var e in entriesDry)
+    {
+        Console.WriteLine($"Entry #{++i}");
+        Console.WriteLine($"  Company: {e.Company}");
+        Console.WriteLine($"  Project: {e.Project}");
+        Console.WriteLine($"  Group:   {e.Group}");
+        Console.WriteLine($"  Task:    {e.Task}");
+        Console.WriteLine($"  Start:   {e.Start:u}");
+        Console.WriteLine($"  End:     {e.End:u}");
+        Console.WriteLine($"  Billable:{(e.Billable.HasValue ? (e.Billable.Value ? " Yes" : " No") : " Unknown")}");
+        Console.WriteLine($"  Notes:   {e.Notes}");
+        Console.WriteLine();
+    }
+
+    Console.WriteLine($"Dry-run complete. Parsed {entriesDry.Count()} entries.");
+    return 0;
+}
 
 if (!File.Exists(configPath))
 {
@@ -39,6 +73,26 @@ var api = new TeamleaderApi(http);
 var resolver = new Resolver(api);
 
 var entries = CsvParser.Read(inputPath);
+if (dryRun)
+{
+    int i = 0;
+    foreach (var e in entries)
+    {
+        Console.WriteLine($"Entry #{++i}");
+        Console.WriteLine($"  Company: {e.Company}");
+        Console.WriteLine($"  Project: {e.Project}");
+        Console.WriteLine($"  Group:   {e.Group}");
+        Console.WriteLine($"  Task:    {e.Task}");
+        Console.WriteLine($"  Start:   {e.Start:u}");
+        Console.WriteLine($"  End:     {e.End:u}");
+        Console.WriteLine($"  Billable:{(e.Billable.HasValue ? (e.Billable.Value ? " Yes" : " No") : " Unknown")}");
+        Console.WriteLine($"  Notes:   {e.Notes}");
+        Console.WriteLine();
+    }
+    Console.WriteLine($"Dry-run complete. Parsed {entries.Count()} entries.");
+    return 0;
+}
+
 int processed = 0;
 foreach (var e in entries)
 {
