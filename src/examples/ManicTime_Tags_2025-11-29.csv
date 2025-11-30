@@ -1,0 +1,12 @@
+﻿"Name","Start","End","Duration","Notes","Billable"
+"SASU Novia Swk, Support Project Tracker 2024-Q4, Development, Consultancy Hours","2025-11-28T12:00:00.0000000","2025-11-28T14:00:00.0000000","2:00:00","","Yes"
+"Cardoen, M-SQL Server, Tijdsregistratie","2025-11-28T14:45:00.0000000","2025-11-28T15:00:00.0000000","0:15:00","* Meeting: auto's particulier verkoopbaar (Daniel, Dirk & Anne)","Yes"
+"Cardoen, M-SQL Server, Tijdsregistratie","2025-11-28T15:00:00.0000000","2025-11-28T15:30:00.0000000","0:30:00","* Meeting stand van zaken (Philippe, Daniel)","Yes"
+"Bellucci, Peppol, Implementeren Billit, In bijlage zie je een klantenfiche. Zipcode zou er zeker moeten bijkomen (ontbreekt overal) en het telefoonnummer graag in een werkend formaat (soms ok en soms niet)!","2025-11-28T15:30:00.0000000","2025-11-28T16:00:00.0000000","0:30:00","","No"
+"Deme Environmental, TimeTracking Tool, Support, Tijdsregistratie","2025-11-28T16:00:00.0000000","2025-11-28T16:30:00.0000000","0:30:00","* Stine krijgt programma niet openen
+- Programma geopend op de share en kapot
+- Versie checken, na restore => ok","Yes"
+"Bellucci, Peppol, Implementeren Billit, In bijlage zie je een klantenfiche. Zipcode zou er zeker moeten bijkomen (ontbreekt overal) en het telefoonnummer graag in een werkend formaat (soms ok en soms niet)!","2025-11-28T16:30:00.0000000","2025-11-28T17:00:00.0000000","0:30:00","","No"
+"Bellucci, Peppol, Implementeren Billit, all onze klanten zet je standaard op taal Dutch in Billit. Mss beter English. Je weet nooit waar dit effect heeft.","2025-11-28T17:00:00.0000000","2025-11-28T17:30:00.0000000","0:30:00","","No"
+"Bellucci, Peppol, Implementeren Billit, De tariffs zitten in de productlijn zie ik. Moest dat niet apart voor de boekhouder?","2025-11-28T17:30:00.0000000","2025-11-28T18:15:00.0000000","0:45:00","","No"
+"Bellucci, Peppol, Implementeren Billit, er zijn nog afrondingsverschillen bvb. 2025/BLCI2248","2025-11-28T18:15:00.0000000","2025-11-28T19:00:00.0000000","0:45:00","'- Publish to server","No"

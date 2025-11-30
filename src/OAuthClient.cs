@@ -6,16 +6,15 @@ using System.Threading.Tasks;
 
 public static class OAuthClient
 {
-    private const string TokenEndpoint = "https://focus.teamleader.eu/oauth2/access_token";
     private static string? _cachedToken;
     private static DateTime _expiryUtc;
 
-    public static async Task<string?> GetTokenAsync(string baseUrl, string clientId, string clientSecret)
+    public static async Task<string?> GetTokenAsync(string tokenUrl, string clientId, string clientSecret)
     {
         if (!string.IsNullOrWhiteSpace(_cachedToken) && DateTime.UtcNow < _expiryUtc.AddSeconds(-60))
             return _cachedToken;
 
-        using var http = new HttpClient { BaseAddress = new Uri(baseUrl) };
+        using var http = new HttpClient();
 
         var form = new Dictionary<string, string>
         {
@@ -25,8 +24,7 @@ public static class OAuthClient
         };
 
         using var content = new FormUrlEncodedContent(form);
-        // Teamleader's OAuth token endpoint is /oauth2/access_token
-        var resp = await http.PostAsync(TokenEndpoint, content);
+        var resp = await http.PostAsync(tokenUrl, content);
         if (!resp.IsSuccessStatusCode) return null;
 
         var json = await resp.Content.ReadAsStringAsync();
@@ -51,9 +49,9 @@ public static class OAuthClient
 
     public record AuthToken(string AccessToken, string? RefreshToken, int ExpiresIn, string? TokenType, DateTime ObtainedAt);
 
-    public static async Task<AuthToken?> ExchangeAuthorizationCodeAsync(string baseUrl, string clientId, string clientSecret, string code, string redirectUri)
+    public static async Task<AuthToken?> ExchangeAuthorizationCodeAsync(string tokenUrl, string clientId, string clientSecret, string code, string redirectUri)
     {
-        using var http = new HttpClient { BaseAddress = new Uri(baseUrl) };
+        using var http = new HttpClient();
 
         var form = new Dictionary<string, string>
         {
@@ -65,7 +63,7 @@ public static class OAuthClient
         };
 
         using var content = new FormUrlEncodedContent(form);
-        var resp = await http.PostAsync(TokenEndpoint, content);
+        var resp = await http.PostAsync(tokenUrl, content);
         if (!resp.IsSuccessStatusCode) return null;
 
         var json = await resp.Content.ReadAsStringAsync();
@@ -84,6 +82,44 @@ public static class OAuthClient
 
         var tok = new AuthToken(access, refresh, expiresIn, tokenType, DateTime.UtcNow);
         // update client-credentials cache as well
+        _cachedToken = tok.AccessToken;
+        _expiryUtc = DateTime.UtcNow.AddSeconds(tok.ExpiresIn);
+        return tok;
+    }
+
+    public static async Task<AuthToken?> RefreshTokenAsync(string tokenUrl, string clientId, string clientSecret, string refreshToken)
+    {
+        if (string.IsNullOrWhiteSpace(refreshToken)) return null;
+        using var http = new HttpClient();
+
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = "refresh_token",
+            ["client_id"] = clientId,
+            ["client_secret"] = clientSecret,
+            ["refresh_token"] = refreshToken
+        };
+
+        using var content = new FormUrlEncodedContent(form);
+        var resp = await http.PostAsync(tokenUrl, content);
+        if (!resp.IsSuccessStatusCode) return null;
+
+        var json = await resp.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var access = root.TryGetProperty("access_token", out var a) ? a.GetString() : null;
+        var refresh = root.TryGetProperty("refresh_token", out var r) ? r.GetString() : null;
+        var tokenType = root.TryGetProperty("token_type", out var tt) ? tt.GetString() : null;
+        var expiresIn = 3600;
+        if (root.TryGetProperty("expires_in", out var ei) && ei.ValueKind == JsonValueKind.Number)
+        {
+            if (ei.TryGetInt32(out var v)) expiresIn = v;
+        }
+
+        if (string.IsNullOrWhiteSpace(access)) return null;
+
+        var tok = new AuthToken(access, refresh, expiresIn, tokenType, DateTime.UtcNow);
+        // update in-memory cache
         _cachedToken = tok.AccessToken;
         _expiryUtc = DateTime.UtcNow.AddSeconds(tok.ExpiresIn);
         return tok;

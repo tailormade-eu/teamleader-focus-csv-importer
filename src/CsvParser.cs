@@ -142,11 +142,40 @@ public static class CsvParser
         string task = tags.Length > 3 ? tags[3] : (tags.Length > 2 ? tags[2] : string.Empty);
         var extras = tags.Length > 4 ? tags.Skip(4).ToArray() : Array.Empty<string>();
 
+        // Extract URLs and ticket IDs from company/project/group/task fields and strip them
+        var urls = new List<string>();
+        var ticketIds = new List<string>();
+        company = RemoveUrlsFromField(company, urls);
+        project = RemoveUrlsFromField(project, urls);
+        group = RemoveUrlsFromField(group, urls);
+        task = RemoveUrlsFromField(task, urls);
+
+        // After removing URLs, try to extract ticket ids like #12345 (may be in brackets)
+        company = RemoveTicketIdsFromField(company, ticketIds);
+        project = RemoveTicketIdsFromField(project, ticketIds);
+        group = RemoveTicketIdsFromField(group, ticketIds);
+        task = RemoveTicketIdsFromField(task, ticketIds);
+
         DateTime? start = ParseDate(startStr);
         DateTime? end = ParseDate(endStr);
 
-        var noteWithExtras = notes ?? string.Empty;
-        if (extras.Any()) noteWithExtras += " | " + string.Join(", ", extras);
+        var baseNotes = (notes ?? string.Empty).Trim();
+        var extrasPart = extras.Any() ? string.Join(", ", extras) : string.Empty;
+        string noteWithExtras;
+        if (!string.IsNullOrEmpty(baseNotes) && !string.IsNullOrEmpty(extrasPart))
+            noteWithExtras = baseNotes + " | " + extrasPart;
+        else
+            noteWithExtras = string.IsNullOrEmpty(baseNotes) ? extrasPart : baseNotes;
+
+        // Clean up stray surrounding quotes or separators introduced by CSV parsing
+        noteWithExtras = noteWithExtras.Trim();
+        if (!string.IsNullOrEmpty(noteWithExtras))
+        {
+            // Remove surrounding single or double quotes
+            noteWithExtras = noteWithExtras.Trim('"', '\'');
+            // Trim again to remove any whitespace left after quote removal
+            noteWithExtras = noteWithExtras.Trim();
+        }
 
         bool? billable = null;
         if (!string.IsNullOrWhiteSpace(billableField))
@@ -163,11 +192,105 @@ public static class CsvParser
             Group = group,
             Task = task,
             Extras = extras,
+            Urls = urls.Distinct(System.StringComparer.OrdinalIgnoreCase).ToArray(),
+            TicketIds = ticketIds.Distinct(System.StringComparer.OrdinalIgnoreCase).ToArray(),
             Start = start,
             End = end,
             Notes = noteWithExtras,
             Billable = billable
         };
+    }
+
+    static string RemoveUrlsFromField(string input, List<string> collector)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return input;
+
+        // Simple URL regex: match http/https and www. variants, stop at whitespace or common trailing punctuation
+                var urlRegex = new System.Text.RegularExpressions.Regex(@"((?:https?:\/\/|www\.)\S+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var s = input;
+        var matches = urlRegex.Matches(s);
+        if (matches.Count == 0) return s.Trim();
+
+        // Process matches in reverse order so removals don't shift indices
+        for (int i = matches.Count - 1; i >= 0; i--)
+        {
+            var m = matches[i];
+            var start = m.Index;
+            var end = m.Index + m.Length; // exclusive
+
+            // expand to remove surrounding single-character braces if present
+            if (start - 1 >= 0)
+            {
+                var before = s[start - 1];
+                if (before == '(' || before == '[' || before == '{' || before == '<')
+                {
+                    start = start - 1;
+                }
+            }
+            if (end < s.Length)
+            {
+                var after = s[end];
+                if (after == ')' || after == ']' || after == '}' || after == '>')
+                {
+                    end = end + 1;
+                }
+            }
+
+                // collect the raw URL (without surrounding braces or trailing punctuation)
+                var rawUrl = m.Value.Trim().Trim('"', '\'', '.', ',', ';');
+                // trim outer braces if present in the captured value
+                rawUrl = rawUrl.Trim('(', ')', '[', ']', '{', '}', '<', '>');
+            collector.Add(rawUrl);
+
+            // remove substring
+            s = s.Remove(start, end - start);
+        }
+
+        // normalize whitespace and punctuation leftover
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"[\s,;|]+", " ").Trim();
+        // remove leftover matching empty braces pairs like () [] {}
+        s = s.Replace("()", string.Empty).Replace("[]", string.Empty).Replace("{}", string.Empty).Replace("<>", string.Empty).Trim();
+        return s;
+    }
+
+    static string RemoveTicketIdsFromField(string input, List<string> collector)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return input;
+
+        var s = input;
+        // Find patterns like #12345 (word boundary) - allow optional surrounding brackets
+        var regex = new System.Text.RegularExpressions.Regex(@"#(?<id>\d+)\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+        var matches = regex.Matches(s);
+        if (matches.Count == 0) return s.Trim();
+
+        // collect in reverse order and remove occurrences including surrounding single-char braces
+        for (int i = matches.Count - 1; i >= 0; i--)
+        {
+            var m = matches[i];
+            var start = m.Index;
+            var end = m.Index + m.Length; // exclusive
+
+            // expand to remove surrounding single-character braces or preceding '[' like [#123]
+            if (start - 1 >= 0)
+            {
+                var before = s[start - 1];
+                if (before == '(' || before == '[' || before == '{' || before == '<') start = start - 1;
+            }
+            if (end < s.Length)
+            {
+                var after = s[end];
+                if (after == ')' || after == ']' || after == '}' || after == '>') end = end + 1;
+            }
+
+            var id = m.Groups[0].Value.Trim(); // includes the leading '#'
+            collector.Add(id);
+
+            s = s.Remove(start, end - start);
+        }
+
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"[\s,;|]+", " ").Trim();
+        s = s.Replace("()", string.Empty).Replace("[]", string.Empty).Replace("{}", string.Empty).Replace("<>", string.Empty).Trim();
+        return s;
     }
 
     static DateTime? ParseDate(string s)
